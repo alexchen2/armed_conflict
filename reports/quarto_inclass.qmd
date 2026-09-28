@@ -48,6 +48,13 @@ armed_conflict/
 The R code chunk below includes the R packages required to knit this document. This is often called a **setup** code. We want the code to run, but we don't want the final document to show the code or results. Edit the code chunk so that the code will run but the code and results (including all warnings and messages) are hidden from the final PDF output.
 
 ```{r}
+#| echo: false
+#| output: false
+
+# install.packages("tidyverse")
+# install.packages("knitr")
+# install.packages("kableExtra")
+# install.packages("forcats")
 library(tidyverse)
 library(knitr)
 library(kableExtra)
@@ -74,18 +81,43 @@ The **final goal** is to display a **bar chart** that depicts how many countries
 ```{r}
 #| echo: TRUE
 countries <- read.table("../data/raw/countries.txt", header = TRUE)
-## more code here
+nrows_coun <- nrow(countries)
+ncols_coun <- ncol(countries)
+sprintf("Number of rows: %d", nrows_coun)
+sprintf("Number of columns: %d", ncols_coun)
+sprintf("Number of unique countries: %d", length(unique(countries$country_name)))
 ```
-*Replace this sentence with another sentence that states how many countries are included in the data set.*
+*Answer:* From the code output above, we see that the `countries` dataset contains 186 unique countries (same as the number of rows). 
 
 **Second**, read in `regions.txt` and also write a sentence that states how many countries are included in the data set.
 
-<!-- Put code chunk here -->
+```{r}
+regions <- read.table("../data/raw/regions.txt", header = TRUE)
+nrows_reg <- nrow(regions)
 
+sprintf(
+  "# of unique countries in regions.txt: %d",
+  length(unique(regions$country_name))
+)
+```
+*Answer:* We see that the `regions` dataset contains 249 unique countries; more than that of `countries.txt`.
 
 **Third**, subset the `regions` data set to only include countries from the `countries` data set.
 
-<!-- Put code chunk here -->
+```{r}
+regions_filt <- regions[regions$country_name %in% countries$country_name, ]
+
+sprintf("Number of rows in 'regions_filt': %d", nrow(regions_filt))
+sprintf("Number of rows in original 'countries' dataset: %d", nrow(countries))
+sprintf(
+  "Does regions_filt have all countries from 'countries' dataset: %s", 
+  nrow(regions_filt) == nrow(countries)
+)
+sprintf(
+  "Is 'regions_filt' subset of 'countries': %s", 
+  all(regions_filt$country_name %in% countries$country_name)
+)
+```
 
 
 
@@ -93,12 +125,37 @@ countries <- read.table("../data/raw/countries.txt", header = TRUE)
 
 Next, we want to find out how many countries are in a region. Use the `group_by()` and `summarise()` functions in the `dplyr` package to count the number of countries in each region. Then use the `kable()` function in the `knitr` package to create a simple table with the column headers, "Region" and "Count". 
 
-<!-- Put code chunk here -->
+```{r}
+# Filter by region, then create column for count of countries per region
+ncountries_reg <- regions_filt %>%
+  group_by(region) %>%
+  summarise(num_countries = n()
+)
+
+kable(
+  head(ncountries_reg),
+  col.names = c("Region", "Count"),
+  align = c("l", "l"),
+  caption = "Number of Countries per Region"
+)
+```
 
 
 Create a similar table that shows the number of countries in each **sub-region**.
 
-<!-- Put code chunk here -->
+```{r}
+# Filter by subregion, then create column for count of countries per subregion
+ncountries_sr <- regions_filt %>%
+  group_by(sub_region) %>%
+  summarise(num_countries = n())
+
+kable(
+  head(ncountries_sr),
+  col.names = c("Sub-region", "Count"),
+  align = c("l", "l"),
+  caption = "Number of Countries per Sub-region"
+)
+```
 
 
 
@@ -110,5 +167,22 @@ Here, we will use `geom_bar()` function within `ggplot()` to create a bar chart 
 2. Create bars that run horizontally where sub-region names appear along the y-axis. 
 3. Order the bars such that the sub-region with the most number countries appear at the top and the sub-region with the least number of countries appear at the bottom. 
 
-<!-- Put code chunk here -->
+```{r}
+library(forcats)
+
+ncountries_sr_plot <- ggplot(
+  data = regions_filt,
+  mapping = aes(x = fct_rev(fct_infreq(sub_region)), fill = region)
+) + 
+  geom_bar() +
+  labs(
+    x = "Sub-region", 
+    y = "Number of Countries", 
+    title = "Number of Countries per Sub-region",
+    fill = "Region"
+   ) +
+  coord_flip()
+
+ncountries_sr_plot
+```
 
