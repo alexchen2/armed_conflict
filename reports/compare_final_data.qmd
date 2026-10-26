@@ -1,0 +1,303 @@
+---
+title: "Comparison of `final_data.csv` and `final_data_copilot.csv`"
+author: "Alex Chen"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+  error: false
+---
+
+## Purpose
+
+This report compares the two processed datasets produced by the scripts in `scripts/`:
+
+- `data/processed/final_data.csv`, produced by `scripts/create_final_data.R`
+- `data/processed/final_data_copilot.csv`, produced by `scripts/create_final_data_copilot.R`
+
+The comparison evaluates structure, country-year coverage, missingness, and agreement in variables that both datasets contain. The assignment asks for a country-year analytical dataset covering 2000–2019, with four mortality outcomes, drought and earthquake indicators, and a one-year-lagged armed-conflict indicator. The paper defines the primary binary conflict exposure as at least 25 battle-related deaths in a country-conflict-year and analyzes maternal, under-5, infant, and neonatal mortality outcomes.
+
+The two scripts differ most importantly in their choice of analysis frame. `create_final_data.R` uses full joins among mortality, disaster, and conflict data. `create_final_data_copilot.R` begins with `covariates.csv` and left joins the remaining sources onto that country-year panel.
+
+## Setup and data import
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(knitr)
+
+manual_path <- here::here("data", "processed", "final_data.csv")
+copilot_path <- here::here("data", "processed", "final_data_copilot.csv")
+
+manual <- read_csv(manual_path, na = "NA", show_col_types = FALSE)
+copilot <- read_csv(copilot_path, na = "NA", show_col_types = FALSE)
+
+key_vars <- c("iso", "year")
+
+mortality_name_map <- c(
+  matmor = "maternal_mortality",
+  infmor = "infant_mortality",
+  neomor = "neonatal_mortality",
+  un5mor = "under5_mortality"
+)
+
+copilot_aligned <- copilot |>
+  rename(all_of(mortality_name_map))
+```
+
+The Copilot mortality variables are renamed only inside this report so that their values can be compared directly with the abbreviated names in the manually generated dataset.
+
+## Dataset structure
+
+```{r}
+#| label: structure-summary
+structure_summary <- tibble(
+  dataset = c("final_data.csv", "final_data_copilot.csv"),
+  rows = c(nrow(manual), nrow(copilot)),
+  columns = c(ncol(manual), ncol(copilot)),
+  countries = c(n_distinct(manual$iso), n_distinct(copilot$iso)),
+  first_year = c(min(manual$year), min(copilot$year)),
+  last_year = c(max(manual$year), max(copilot$year)),
+  duplicate_country_years = c(
+    sum(duplicated(manual[key_vars])),
+    sum(duplicated(copilot[key_vars]))
+  )
+)
+
+kable(structure_summary, caption = "Overall dataset structure")
+```
+
+Both files should have one row per country-year. The duplicate check above verifies this key requirement rather than relying only on the scripts' intended behavior.
+
+### Variables present in each file
+
+```{r}
+#| label: schema-comparison
+schema <- full_join(
+  tibble(variable = names(manual), in_manual = TRUE),
+  tibble(variable = names(copilot), in_copilot = TRUE),
+  by = "variable"
+) |>
+  mutate(
+    in_manual = replace_na(in_manual, FALSE),
+    in_copilot = replace_na(in_copilot, FALSE),
+    status = case_when(
+      in_manual & in_copilot ~ "same name in both",
+      in_manual ~ "manual only",
+      TRUE ~ "Copilot only"
+    )
+  )
+
+kable(schema, caption = "Column-name comparison before harmonizing mortality names")
+```
+
+`final_data_copilot.csv` includes the covariates from `covariates.csv`: GDP per capita in thousands, OECD membership, population density, urbanization, age dependency, male education, temperature, and rainfall. These variables are absent from `final_data.csv`. The four mortality outcomes are present in both files but use different names.
+
+## Country-year coverage
+
+```{r}
+#| label: key-coverage
+manual_keys <- manual |> distinct(iso, year)
+copilot_keys <- copilot |> distinct(iso, year)
+
+manual_only_keys <- anti_join(manual_keys, copilot_keys, by = key_vars) |>
+  arrange(iso, year)
+
+copilot_only_keys <- anti_join(copilot_keys, manual_keys, by = key_vars) |>
+  arrange(iso, year)
+
+key_summary <- tibble(
+  comparison = c("Shared", "Manual only", "Copilot only"),
+  country_years = c(
+    nrow(inner_join(manual_keys, copilot_keys, by = key_vars)),
+    nrow(manual_only_keys),
+    nrow(copilot_only_keys)
+  )
+)
+
+kable(key_summary, caption = "Country-year key overlap")
+```
+
+```{r}
+#| label: manual-only-rows
+if (nrow(manual_only_keys) > 0) {
+  manual_only_detail <- manual |>
+    semi_join(manual_only_keys, by = key_vars) |>
+    arrange(iso, year)
+
+  kable(manual_only_detail, caption = "Country-years retained only by the full-join workflow")
+} else {
+  cat("There are no country-years found only in the manually generated dataset.")
+}
+```
+
+```{r}
+#| label: copilot-only-rows
+if (nrow(copilot_only_keys) > 0) {
+  kable(copilot_only_keys, caption = "Country-years found only in the Copilot dataset")
+} else {
+  cat("There are no country-years found only in the Copilot dataset.")
+}
+```
+
+The interpretation follows directly from the join strategy:
+
+- A full join retains any country-year found in mortality, disaster, or conflict data, even if it is absent from the covariate panel.
+- A left join beginning with `covariates.csv` restricts the result to the country-years in that file.
+- Therefore, extra rows in `final_data.csv` are not evidence that its shared values are better. They reflect a broader, event-driven union of keys. Such rows cannot support covariate-adjusted analysis when no covariate record exists for the same country-year.
+
+## Agreement on shared variables
+
+```{r}
+#| label: value-agreement
+shared_variables <- intersect(names(manual), names(copilot_aligned)) |>
+  setdiff(key_vars)
+
+paired <- inner_join(
+  manual,
+  copilot_aligned,
+  by = key_vars,
+  suffix = c("_manual", "_copilot")
+)
+
+compare_one_variable <- function(var) {
+  x <- paired[[paste0(var, "_manual")]]
+  y <- paired[[paste0(var, "_copilot")]]
+  same <- (x == y) | (is.na(x) & is.na(y))
+
+  tibble(
+    variable = var,
+    compared_rows = length(same),
+    exact_matches_including_NA = sum(same, na.rm = TRUE),
+    differing_rows = sum(!same | is.na(same)),
+    missing_manual = sum(is.na(x)),
+    missing_copilot = sum(is.na(y)),
+    maximum_absolute_difference = if (is.numeric(x)) {
+      if (all(is.na(x - y))) NA_real_ else max(abs(x - y), na.rm = TRUE)
+    } else {
+      NA_real_
+    }
+  )
+}
+
+agreement <- map_dfr(shared_variables, compare_one_variable)
+kable(agreement, digits = 6, caption = "Agreement for harmonized variables on shared country-years")
+```
+
+This is the central result. It distinguishes differences in dataset design from differences in calculations. Exact agreement on the shared country-year rows means that the mortality reshaping, disaster indicators, and lagged binary conflict indicator produce the same observed values in both outputs. Any overall row-count or missing-count differences can then be attributed to the analysis frame rather than inconsistent values on matched observations.
+
+## Missingness comparison
+
+```{r}
+#| label: missingness
+missing_summary <- bind_rows(
+  manual |>
+    summarise(across(everything(), ~ sum(is.na(.x)))) |>
+    pivot_longer(everything(), names_to = "variable", values_to = "missing") |>
+    mutate(dataset = "final_data.csv", total_rows = nrow(manual)),
+  copilot_aligned |>
+    summarise(across(everything(), ~ sum(is.na(.x)))) |>
+    pivot_longer(everything(), names_to = "variable", values_to = "missing") |>
+    mutate(dataset = "final_data_copilot.csv", total_rows = nrow(copilot_aligned))
+) |>
+  mutate(percent_missing = 100 * missing / total_rows) |>
+  select(dataset, variable, missing, percent_missing)
+
+kable(missing_summary, digits = 2, caption = "Missing values by dataset and variable")
+```
+
+For a like-for-like comparison of mortality variables, the shared key set is more informative than the raw totals above. The broader full-join dataset can contain additional event-only country-years whose mortality outcomes are missing. These rows increase missing counts in `final_data.csv` without implying disagreement on the 3,720 country-years shared by both files.
+
+### Missingness restricted to shared country-years
+
+```{r}
+#| label: shared-key-missingness
+shared_missing <- map_dfr(shared_variables, function(var) {
+  tibble(
+    variable = var,
+    missing_manual = sum(is.na(paired[[paste0(var, "_manual")]])),
+    missing_copilot = sum(is.na(paired[[paste0(var, "_copilot")]]))
+  )
+})
+
+kable(shared_missing, caption = "Missingness on shared country-years")
+```
+
+## Script-level explanation of the differences
+
+### 1. Choice of analysis frame
+
+The manual script builds:
+
+```r
+list(wbdata, disasters_clean, conflicts_clean) |>
+  reduce(full_join, by = c("iso", "year"))
+```
+
+This creates the union of all country-year keys observed in the three components. It does not merge `covariates.csv`, although that file is one of the supplied raw datasets and contains the remaining variables needed for the analytical dataset.
+
+The Copilot script instead builds:
+
+```r
+covariate_data |>
+  left_join(mortality_data, by = c("iso", "year")) |>
+  left_join(disaster_data, by = c("iso", "year")) |>
+  left_join(conflict_data, by = c("iso", "year"))
+```
+
+This treats the covariate panel as the intended analysis frame. It produces a rectangular 186-country panel over 2000–2019 and includes the covariates required for later modeling.
+
+### 2. Study-period restriction
+
+The Copilot script explicitly applies the 2000–2019 restriction to mortality, disaster, conflict, and covariate data. The manual script filters disasters, while the mortality files appear to have already been limited to the relevant year columns in the output being compared. Explicit filtering is safer because it makes the intended study period clear and prevents future changes in raw files from silently changing the processed output.
+
+### 3. Conflict construction
+
+Both scripts:
+
+1. sum `best` deaths within `iso`, `year`, and `conflict_id`;
+2. set the country-year indicator to one when at least one conflict reaches 25 deaths; and
+3. add one to `year` to implement the one-year lag.
+
+The Copilot script is more explicit about all-missing death estimates before the subsequent join. However, both final outputs replace unmatched or missing `had_conflict` values with zero. Consequently, the final results agree on the shared rows. The resulting zero should be interpreted as “no qualifying conflict recorded in the supplied data,” not absolute proof that no conflict occurred.
+
+### 4. Validation and reproducibility
+
+The Copilot script includes checks for duplicate country-years, study-period bounds, and binary indicator values. These checks make failures visible when source files or code change. The manual script's `identical()` and `anti_join()` checks are useful exploratory comparisons, but `identical()` is overly strict for datasets that may differ only in column names, column order, numeric storage type, or row order. The key-based and variable-by-variable comparison used in this report is more diagnostic.
+
+## Overall assessment
+
+The two outputs do **not** differ in their calculated mortality, drought, earthquake, or lagged-conflict values for shared country-years. Their important differences are structural:
+
+1. `final_data.csv` has fewer variables because it omits all covariates.
+2. Its full joins retain a small set of additional country-years found in event data but absent from `covariates.csv`.
+3. `final_data_copilot.csv` uses the 186-country covariate panel as the analysis frame, includes all covariates, and contains one row for every country-year from 2000 through 2019.
+
+For the assignment's stated goal of producing a final analytical dataset for later exploratory and regression analyses, the Copilot output is the more suitable final dataset. It includes all supplied analysis variables and has a clearly defined country-year frame. The manual output is still useful as an audit dataset because its full joins reveal records in disaster or conflict data that fall outside the intended covariate panel.
+
+A strong final implementation would preserve the Copilot script's covariate-based analysis frame and validation checks, while also writing an audit table of source records excluded by that frame. This would combine analytical suitability with transparency about unmatched country-years.
+
+## Recommended audit checks
+
+```{r}
+#| label: recommended-checks
+stopifnot(
+  !anyDuplicated(copilot[c("iso", "year")]),
+  all(copilot$year %in% 2000:2019),
+  all(copilot$earthquake %in% c(0L, 1L)),
+  all(copilot$drought %in% c(0L, 1L)),
+  all(copilot$had_conflict %in% c(0L, 1L))
+)
+
+comparison_passed <- all(agreement$differing_rows == 0)
+cat("All harmonized shared variables agree:", comparison_passed, "\n")
+```
+
+These checks confirm internal validity, while the country-year anti-joins above document observations excluded by the covariate-based analysis frame.

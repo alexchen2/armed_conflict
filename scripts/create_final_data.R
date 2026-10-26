@@ -76,7 +76,9 @@ conflicts_clean <- conflicts |>
   )
 
 ### Part 4: Merge all data into final DF ###
-data_list <- list(wbdata, disasters_clean, conflicts_clean)
+covariates <- read.csv("./data/raw/covariates.csv", header = TRUE)
+
+data_list <- list(wbdata, disasters_clean, conflicts_clean, covariates)
 final_data <- reduce(data_list, full_join, by = c('iso', 'year'))
 
 # Deal with missingness in earthquake, drought, and had_conflict columns; if no recorded disaster for that year,
