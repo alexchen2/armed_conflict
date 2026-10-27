@@ -1,0 +1,221 @@
+---
+title: "CHL5233: Week 5 Assignment (EDA)"
+author: "Alex Chen"
+format: 
+  pdf:
+    geometry:
+      - top=30mm
+      - left=20mm
+      - heightrounded
+execute:
+  echo: true
+  warning: false
+  message: false
+  error: false
+---
+
+## Purpose
+
+This document explores my EDA tasks that I detailed in a previous quiz, which are to be performed on the preprocessed armed conflict data. For reference, here was my plan:
+
+> The first thing I'd want to investigate is the mortality rate columns from my preprocessed dataset. For instance, is missingness in any of the variables substantial or systemic due to other factors, or is there an uneven distribution of mortality data compared to other variables (like among certain countries)? For missingness, I plan to visualize missingness in each of these columns overall, then also grouped by other factors like certain conflicts/disasters, years, countries, etc. For countries, I'd want to particularly investigate if certain countries would end up being over-/under-represented from a complete-case analysis. If so, I'd want to check whether there might be an underlying connection between them. This would help me collect evidence towards whether the idea of the data exhibiting patterns of MAR over MCAR might be plausible, and decide upon a reasonable approach to deal with it.
+
+
+## Package and Data Imports
+```{r}
+library(tidyverse)
+library(here)
+library(readr)
+library(janitor)
+library(naniar)
+
+set.seed(420)
+
+armed_conflict <- read.csv(here("data", "processed", "final_data.csv"))
+```
+
+## Initial probing of dataset
+
+```{r}
+# Explore general dataset first
+head(armed_conflict)
+tail(armed_conflict)
+
+slice_sample(armed_conflict, n = 5)
+```
+
+```{r}
+names(armed_conflict)
+glimpse(armed_conflict)
+```
+
+```{r}
+#| echo: false
+#| output: false
+armed_conflict %>% 
+  select(iso, year, matmor, infmor, neomor, un5mor) %>%
+  summary()
+
+# Extract proportion of rows with NAs to total rows for a given column label and dataset
+mor_cols <- c("matmor", "infmor", "neomor", "un5mor")
+mor_labels <- c(
+  matmor = "Maternal mortality",
+  infmor = "Infant mortality",
+  neomor = "Neonatal mortality",
+  un5mor = "Under-5 mortality"
+)
+
+get_proportion_nas <- function(col_name, dataset) {
+  num_na <- sum(is.na(dataset[[col_name]]))
+  num_na / length(dataset[[col_name]]) * 100
+}
+
+rename_mor_cols <- function(vector) {
+  replace_values(
+    vector,
+    "matmor" ~ "Maternal mortality",
+    "infmor" ~ "Infant mortality",
+    "neomor" ~ "Neonatal mortality",
+    "un5mor" ~ "Under-5 mortality"
+  )
+}
+
+mor_proportion_nas <- sapply(mor_cols, get_proportion_nas, armed_conflict)
+names(mor_proportion_nas) <- mor_labels
+
+sprintf("Proportion of missing data among mortality variables:")
+mor_proportion_nas
+
+```
+
+
+Here, we notice maternity mortality rate has an abnormally high amount of missingness; more than 11.0% of the dataset contains NA values (as opposed to 0.86% of rows for the other mortality variables). We take a look at the mortality variables closer and investigate if their missingness is related to any other factors.
+
+## Compare mortality missingness among year/iso
+
+```{r}
+# Compare matmor missingness with year
+missing_by_year <- armed_conflict %>%
+  group_by(year) %>%
+  summarize(
+    across(
+      all_of(mor_cols),
+      \(x) mean(is.na(x)),    # notation for lambda functions in R :O
+      .names = "missing_{.col}"
+    ),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = starts_with("missing_"),
+    names_to = "mortality_var",
+    names_prefix = "missing_",
+    values_to = "percent_missing"
+  ) %>%
+  mutate(
+    mortality_var = rename_mor_cols(mortality_var)
+  )
+
+missing_by_year
+```
+
+```{r}
+missing_by_year |>
+  ggplot(
+    aes(
+      x = year,
+      y = percent_missing,
+      color = mortality_var
+    )
+  ) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 1.8) +
+  scale_x_continuous(
+    breaks = seq(
+      min(armed_conflict$year), 
+      max(armed_conflict$year), 
+      2
+    )
+  ) +
+  # scale_y_continuous(labels = percent) +
+  labs(
+    title = "Missingness in Mortality Data, Grouped by Year",
+    x = "Year",
+    y = "Proportion of rows with NAs",
+    color = "Outcome"
+  ) 
+```
+
+We note a large spike in missingness for maternal mortality data in years >= 2018 to 100%; this might be something worth investigating further.
+
+```{r}
+#| echo: false
+#| output: false
+armed_conflict_with_missing <- armed_conflict |>
+  mutate(
+    missing_matmor = as.integer(is.na(matmor)),
+    missing_infmor = as.integer(is.na(infmor)),
+    missing_neomor = as.integer(is.na(neomor)),
+    missing_un5mor = as.integer(is.na(un5mor)),
+    n_mortality_missing = rowSums(across(all_of(mor_cols), is.na)),
+    no_mortality_missing = as.integer(n_mortality_missing == 0),
+    any_mortality_missing = as.integer(n_mortality_missing > 0),
+    event_group = case_when(
+      had_conflict == 1 ~ "Armed conflict",
+      drought == 1 | earthquake == 1 ~ "Disaster, no conflict",
+      TRUE ~ "No recorded conflict/disaster"
+    )
+  )
+```
+
+```{r}
+missing_by_country <- armed_conflict_with_missing %>%
+  group_by(iso) %>%
+  summarize(
+    num_recorded_years = n(),
+    num_years_no_mortality_missing = sum(no_mortality_missing),
+    proportion_complete = mean(no_mortality_missing),
+    across(
+      all_of(mor_cols),
+      ~ mean(is.na(.x)),
+      .names = "missing_{.col}"
+    ),
+    .groups = "drop"
+  ) %>%
+  arrange(proportion_complete, iso)
+
+missing_by_country %>%
+  head(n = 20) 
+```
+
+We observe that 11 countries in particular contain missing values for mortality variables among all their rows (either missing only maternal mortality, or missing all mortality variables---the latter could be due to a faulty join operation during preprocessing). Other countries with missing mortality values display 90% of their rows containing a value for all mortality covariates; the 10% missingness in each country may be due to the dataset missing maternal mortality for every country from years 2018-2019 (as found above).
+
+```{r}
+missing_by_country %>%
+  ggplot(aes(x = proportion_complete)) +
+  geom_histogram(binwidth = 0.05, boundary = 0) +
+  labs(
+    title = "Distribution of mortality completeness across countries",
+    x = "Proportion of a country's years with all outcomes observed",
+    y = "Number of countries"
+  )
+```
+
+```{r}
+missing_by_country |>
+  slice_min(proportion_complete, n = 20, with_ties = FALSE) |>
+  ggplot(aes(
+    x = reorder(iso, proportion_complete),
+    y = proportion_complete
+  )) +
+  geom_col() +
+  # coord_flip() +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    title = "Countries most affected by mortality missingness",
+    x = "ISO country code",
+    y = "Proportion of years retained"
+  ) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+
