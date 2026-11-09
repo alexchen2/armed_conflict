@@ -82,22 +82,28 @@ summary(un5mormod)
 summary(infmormod)
 summary(neomormod)
 
-# Modify model texreg structure to include armed conflict reference level ("no")
-matmor_tr <- extract(matmormod)
-un5mor_tr <- extract(un5mormod)
-infmor_tr <- extract(infmormod)
-neomor_tr <- extract(neomormod)
 
 htmlreg(
   list(matmormod, un5mormod, infmormod, neomormod),
   ci.force = TRUE,
   # groups = list("Armed Conflict" = 1),
-  custom.coef.map = list("had_conflict" = "Armed Conflict"),
+  custom.coef.map = list(
+    "had_conflict" = "Armed Conflict",
+    "loggdp" = "log(GDP)",
+    "oecd" = "OECD",
+    "pop_dens" = "Population Density",
+    "urban" = "Urban",
+    "age_dep" = "Age Dependency",
+    "male_edu" = "Male Education",
+    "temp" = "Average Temperature",
+    "rainfall_1000" = "Average Rainfall",
+    "earthquake" = "Earthquake",
+    "drought" = "Drought"
+  ),
   custom.model.names = c(
     "Maternal mortality",
     "Under-5 mortality",
     "Infant mortality",
     "Neonatal mortality"
-  ),
-  single.row = TRUE
+  )
 )
