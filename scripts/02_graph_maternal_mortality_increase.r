@@ -18,7 +18,7 @@ conflict_diff_matmor <- conflict %>%
 
 # Fetch unique list of countries satisfying conflict_diff_matmor constraints
 countries_with_matmor_incr <- conflict_diff_matmor %>%
-  dplyr::filter(diff_matmor > 0) %>%
+  dplyr::filter(diff_matmor > 0 & year == 2017) %>%
   dplyr::select(iso) %>%
   unique()
 
@@ -47,6 +47,7 @@ ggplot(conflict_matmor_incr, mapping = aes(x = year, y = matmor, color = iso)) +
       0, 
       2000, 
       250      
-    )
-  )
+    ),
+  ) +
+  scale_y_log10()
 

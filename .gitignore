@@ -1,4 +1,6 @@
 *.pdf
-!table01_conflict_summary.pdf
 *.html
 .posit
+
+!table01_conflict_summary.pdf
+!table03_lm_coefficients.html
