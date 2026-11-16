@@ -6,6 +6,7 @@ library(readr)
 library(table1)
 library(xtable)
 library(texreg)
+library(here)
 
 # Import preprocessed data from previous assignments
 armed_conflict <- read.csv(here("data", "processed", "final_data.csv"), header = TRUE)
